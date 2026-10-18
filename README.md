@@ -92,7 +92,7 @@ npm test
 
 ## Deployment
 
-Aplikasi direncanakan berjalan pada VPS Linux dengan PostgreSQL, HTTPS, dan webhook WhatsApp Cloud API.
+Aplikasi berjalan pada VPS Linux dengan PostgreSQL, HTTPS, dan webhook WhatsApp Cloud API.
 
 ## Status
 

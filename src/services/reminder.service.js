@@ -67,6 +67,15 @@ const processReminders = async () => {
                     `Gagal mengirim reminder untuk task ${task.id}:`,
                     error.message
                 );
+
+                await prisma.task.update({
+                    where: { id: task.id },
+                    data: {
+                        nextReminderAt: new Date(Date.now() + REMINDER_INTERVAL_MS)
+                    }
+                }).catch((updateError) => {
+                    console.error('Gagal menjadwalkan ulang reminder:', updateError.message);
+                });
             }
         }
     } catch (error) {

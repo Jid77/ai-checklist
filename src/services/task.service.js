@@ -42,7 +42,8 @@ const createTask = async (title, phone) => {
     return await prisma.task.create({
         data: {
             title: title,
-            userId: user.id
+            userId: user.id,
+            nextReminderAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }
     });
 };
@@ -218,16 +219,7 @@ const completeTaskById = async (taskId, phone) => {
     };
 };
 
-module.exports = {
-    getAllTasks,
-    getCompletedTasks,
-    createTask,
-    completeTask,
-    completeTaskByTitle,
-    completeTaskByNumber,
-    reopenTaskByNumber,
-    completeTaskById
-};
+
 
 module.exports = {
     getAllTasks,

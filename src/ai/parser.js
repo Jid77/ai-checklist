@@ -28,12 +28,13 @@ const normalizeMessage = (message) => {
         .trim()
         .replace(/[!?.,]+/g, ' ')
         .replace(/\s+/g, ' ')
-        .replace(/\b(gw|gua)\b/g, 'gue')
-        .replace(/\b(lo)\b/g, 'lu')
-        .replace(/\b(udh|udah|dah)\b/g, 'sudah')
+        .replace(/\b(gw|gua|gue)\b/g, 'gue')
+        .replace(/\b(lo|elu|elo|kamu|anda)\b/g, 'lu')
+        .replace(/\b(aku|saya)\b/g, 'gue')
+        .replace(/\b(udah|udh|dah)\b/g, 'sudah')
         .replace(/\b(blm|belom)\b/g, 'belum')
         .replace(/\b(yg)\b/g, 'yang')
-        .replace(/\b(gmn)\b/g, 'gimana')
+        .replace(/\b(gmn|gimana)\b/g, 'gimana')
         .replace(/\b(knp)\b/g, 'kenapa')
         .replace(/\b(ga|gak|ngga|nggak)\b/g, 'tidak')
         .replace(/\b(krn)\b/g, 'karena')
@@ -43,11 +44,18 @@ const normalizeMessage = (message) => {
         .replace(/\b(hrs)\b/g, 'harus')
         .replace(/\b(bsk)\b/g, 'besok')
         .replace(/\b(tolong|pls|please)\b/g, ' ')
-        .replace(/\b(catetin|catet|catatkan|catat)\b/g, 'catat')
-        .replace(/\b(tambahin|tambahkan|tambah)\b/g, 'tambah')
+        .replace(/\b(catetin|catetinlah|catet|catatkan|catat)\b/g, 'catat')
+        .replace(/\b(tambahin|tambahi|tambahkan|tambah)\b/g, 'tambah')
         .replace(/\b(ingetin|ingatkan|remind)\b/g, 'ingatkan')
         .replace(/\b(liatin|tampilin|tampilkan|lihatkan)\b/g, 'lihat')
-        .replace(/\b(kerjaanku|pekerjaanku)\b/g, 'task')
+        .replace(/\b(kerjaanku|pekerjaanku|kerjaan gue|pekerjaan gue)\b/g, 'task gue')
+        // Variasi bahasa untuk menyatakan task selesai.
+        .replace(/\b(udah|udh|dah)\s+(gue\s+)?(kerjain|ngerjain|lakuin)\b/g, 'sudah dikerjakan')
+        .replace(/\b(udah|udh|dah)\s+(gue\s+)?dikerjain\b/g, 'sudah dikerjakan')
+        .replace(/\b(udah|udh|dah)\s+(gue\s+)?(selesain|nyelesain|nyelesaiin)\b/g, 'sudah selesai')
+        .replace(/\b(udah|udh|dah)\s+(gue\s+)?(beresin|beresinlah)\b/g, 'sudah beres')
+        // .replace(/\b(aman|fix|kelar nih|done nih|beres nih)\b/g, 'selesai')
+        .replace(/\b(beresin|nyelesain|nyelesaiin|selesain)\b/g, 'selesaikan')
         .replace(/\s+/g, ' ')
         .trim();
 };
@@ -66,13 +74,21 @@ const parseLocally = (message) => {
     if (!text) return UNCLEAR;
 
     // Cegah tindakan yang secara eksplisit ditolak.
+    // Pertanyaan daftar task yang belum selesai tetap diperbolehkan.
+    const isPendingListRequest =
+        /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
+        /\b(apa saja|apa aja|daftar|list|lihat|cek|tampilkan|tampilin|mana)\b/.test(text) &&
+        /\b(belum|pending)\b/.test(text);
+
     if (
+        !isPendingListRequest &&
         /\b(jangan|belum|bukan|tidak|gak usah|batal|batalkan|urungkan)\b/.test(text) &&
         /\b(beres|selesai|kelar|done|selesaikan|pending)\b/.test(text) &&
         !/\bjangan lupa\b/.test(text)
     ) {
         return UNCLEAR;
     }
+
 
     // 1. Membuat task.
     const createMatch = text.match(
@@ -120,6 +136,7 @@ const parseLocally = (message) => {
         });
     }
 
+
     // 3. Melihat daftar task selesai.
     const asksForList =
         /\b(lihat|lihatin|cek|daftar|list|show|spill|tampilkan|tampilin|apa saja|apa aja|mana|riwayat)\b/.test(text);
@@ -127,10 +144,15 @@ const parseLocally = (message) => {
     const mentionsCompleted =
         /\b(completed|selesai|beres|kelar|done|riwayat)\b/.test(text);
 
+    const mentionsPending =
+        /\b(pending|belum)\b/.test(text);
+
+    // Jangan menganggap "belum selesai" sebagai daftar task selesai.
     if (
         asksForList &&
         mentionsCompleted &&
-        !/\b(?:task|tugas)\s+.+\s+(?:sudah\s+)?(?:beres|selesai|kelar|done)\b/.test(text)
+        !mentionsPending &&
+        !/\b(tandai|selesaikan|selesaiin|beresin)\b/.test(text)
     ) {
         return result('LIST_COMPLETED_TASKS');
     }
@@ -138,50 +160,46 @@ const parseLocally = (message) => {
     // 4. Melihat daftar task pending.
     if (
         /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
-        /\b(lihat|cek|daftar|list|show|spill|apa|mana|punya|tampilkan|tampilin|sekarang)\b/.test(text)
+        /\b(belum|pending|lihat|cek|daftar|list|show|spill|apa|mana|punya|tampilkan|tampilin|sekarang)\b/.test(text)
     ) {
         return result('LIST_TASKS');
     }
+
+
+
+
+// 5. Menyelesaikan task berdasarkan nomor.
+const numberCompleteMatch = text.match(
+    /^(?:(?:eh|terus)\s+)?(?:(?:(?:sudah|telah)\s+)?(?:gue\s+)?(?:selesaikan|dikerjakan|kerjain|ngerjain|lakuin)\s+(?:task\s+|tugas\s+)?(\d+)|(?:yang\s+)?(?:task\s+|tugas\s+)?(?:nomor\s*|no\s*)?(\d+)\s*(?:(?:sudah|telah)\s*)?(?:beres|selesai|kelar|done|dikerjakan|selesaikan))$/
+);
+
+if (numberCompleteMatch) {
+    return result('COMPLETE_TASK', {
+        number: Number(numberCompleteMatch[1] || numberCompleteMatch[2])
+    });
+}
+
+
+// 6. Menyelesaikan task berdasarkan judul.
+const completeMatch = text.match(
+    /^(?:yang\s+)?(?:task\s+|tugas\s+)?(.+?)\s+(?:(?:sudah|telah)\s+)?(?:beres|selesai|kelar|done|dikerjakan)$/
+);
+
+if (completeMatch) {
+    const query = completeMatch[1]
+        .replace(/^(?:task|tugas)\s+/, '')
+        .trim();
 
     if (
-        /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
-        /\b(apa saja|apa aja|apaan|punya)\b/.test(text)
+        query &&
+        !/^\d+$/.test(query) &&
+        !/\b(apa saja|apa aja|mana|daftar|list|riwayat)\b/.test(query)
     ) {
-        return result('LIST_TASKS');
+        return result('COMPLETE_TASK', { query });
     }
-
-    // 5. Menyelesaikan task berdasarkan nomor.
-    const numberCompleteMatch = text.match(
-        /^(?:(?:eh|terus)\s+)?(?:yang\s+)?(?:task\s+)?(?:nomor\s*|no\s*)?(\d+)\s*(?:(?:sudah|beres|selesai|kelar)\s*)?(?:sudah\s*)?(?:beres|selesai|kelar|done)$/
-    );
-
-    if (numberCompleteMatch) {
-        return result('COMPLETE_TASK', {
-            number: Number(numberCompleteMatch[1])
-        });
     }
+}
 
-    // 6. Menyelesaikan task berdasarkan judul.
-    const completeMatch = text.match(
-        /^(?:yang\s+)?(?:task\s+|tugas\s+)?(.+?)\s+(?:sudah\s+)?(?:beres|selesai|kelar|done)$/
-    );
-
-    if (completeMatch) {
-        const query = completeMatch[1]
-            .replace(/^(?:task|tugas)\s+/, '')
-            .trim();
-
-        if (
-            query &&
-            !/^\d+$/.test(query) &&
-            !/\b(apa saja|apa aja|mana|daftar|list|riwayat)\b/.test(query)
-        ) {
-            return result('COMPLETE_TASK', { query });
-        }
-    }
-
-    return null;
-};
 
 // Parser AI menggunakan OpenRouter.
 const parseWithOpenRouter = async (message) => {

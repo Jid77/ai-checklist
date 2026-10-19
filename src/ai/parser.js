@@ -1,4 +1,5 @@
 require('dotenv').config();
+const aiStatus = require('./ai-status');
 
 const UNCLEAR = {
     intent: 'UNCLEAR',
@@ -273,12 +274,16 @@ ${JSON.stringify(message)}
     );
 
     if (!response.ok) {
-        // Jangan mencetak API key atau header rahasia ke log.
-        throw new Error(`OpenRouter API mengembalikan status HTTP ${response.status}`);
+        const error = new Error(
+            `OpenRouter API mengembalikan status HTTP ${response.status}`
+        );
+
+        aiStatus.recordError(error);
+        throw error;
     }
 
     const data = await response.json();
-
+    aiStatus.recordSuccess(data.usage?.total_tokens || 0);
     // console.log('OpenRouter response:', JSON.stringify(data, null, 2));
 
     const content = data.choices?.[0]?.message?.content;
@@ -334,6 +339,7 @@ const parseMessage = async (message) => {
     try {
         return await parseWithOpenRouter(message);
     } catch (error) {
+        aiStatus.recordError(error);
         console.error(
             'OpenRouter gagal, menggunakan fallback lokal:',
             error.message
@@ -406,6 +412,7 @@ Contoh:
         }
 
         const data = await response.json();
+        aiStatus.recordSuccess(data.usage?.total_tokens || 0);
         const cleanedTitle = data.choices?.[0]?.message?.content
             ?.trim()
             .replace(/^["'`]+|["'`]+$/g, '');
@@ -416,6 +423,7 @@ Contoh:
 
         return cleanedTitle;
     } catch (error) {
+        aiStatus.recordError(error);
         console.error('Gagal merapikan judul task:', error.message);
 
         // Jika AI gagal, tetap gunakan judul asli.

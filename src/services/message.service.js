@@ -1,56 +1,108 @@
-const { parseMessage } = require('../ai/parser');
+const { parseMessage, cleanTaskTitle  } = require('../ai/parser');
 const taskService = require('./task.service');
 const conversationService = require('./conversation.service');
 
 const handleMessage = async (message, phone) => {
-    // 1. Periksa konteks percakapan sebelumnya.
+    const text = message.trim().toLowerCase();
     const context = conversationService.getContext(phone);
 
-    const contextualMatch = message.match(
-        /^\s*(?:(?:eh|terus)\s+)?(?:yang\s+)?(?:task\s+)?(?:nomor\s*|no\s*)?(\d+)\s*(?:(?:udah|sudah|dah)\s*)?(?:beres|selesai|kelar|done)\s*[.!]?\s*$/i
-    );
-
-    if (
-        contextualMatch &&
-        context?.type === 'PENDING_TASK_LIST'
-    ) {
-        const taskNumber = Number(contextualMatch[1]);
-        const taskId = context.taskIds[taskNumber - 1];
-
-        if (!taskId) {
-            return `Nomor ${taskNumber} tidak ada di daftar task tadi.`;
+    // Jawaban atas pertanyaan klarifikasi tindakan task.
+    if (context?.type === 'ASK_TASK_ACTION') {
+        if (/\b(batal|lupakan|gajadi|tidak jadi)\b/.test(text)) {
+            conversationService.clearContext(phone);
+            return 'Oke, dibatalkan.';
         }
 
-        const result = await taskService.completeTaskById(
-            taskId,
-            phone
-        );
+        if (/\b(selesai|selesain|beres|kelar|done)\b/.test(text)) {
+            const result = await taskService.completeTaskById(
+                context.taskId,
+                phone
+            );
 
-        if (result.result === 'NOT_FOUND') {
-            return 'Task tersebut tidak ditemukan atau sudah selesai sebelumnya.';
+            conversationService.clearContext(phone);
+
+            if (result.result === 'NOT_FOUND') {
+                return 'Task tidak ditemukan atau sudah selesai.';
+            }
+
+            return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
         }
 
-        conversationService.clearContext(phone);
+        if (/\b(pending|balikin|kembalikan)\b/.test(text)) {
+            conversationService.clearContext(phone);
 
-        return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
+            return 'Untuk mengembalikan task ke pending, kirim daftar task yang sudah selesai lalu pilih nomornya.';
+        }
     }
 
-    // 2. Jalankan parser untuk pesan yang bukan perintah kontekstual.
+    // Memilih task dari daftar yang sebelumnya ditampilkan.
+    const numberMatch = text.match(
+        /^(?:(?:eh|terus|yang)\s+)?(?:task\s+)?(?:nomor\s*|no\s*)?(\d+)(?:\s+(?:udah\s+|sudah\s+)?(?:beres|selesai|kelar|done))?[.! ]*$/i
+    );
+
+    if (numberMatch && context?.taskIds?.length) {
+        const number = Number(numberMatch[1]);
+        const taskId = context.taskIds[number - 1];
+
+        if (!taskId) {
+            return `Nomor ${number} tidak ada di daftar tadi.`;
+        }
+
+        if (context.type === 'PENDING_TASK_LIST') {
+            if (/\b(beres|selesai|kelar|done)\b/i.test(text)) {
+                const result = await taskService.completeTaskById(
+                    taskId,
+                    phone
+                );
+
+                conversationService.clearContext(phone);
+
+                if (result.result === 'NOT_FOUND') {
+                    return 'Task tidak ditemukan atau sudah selesai.';
+                }
+
+                return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
+            }
+
+            conversationService.setContext(phone, {
+                type: 'ASK_TASK_ACTION',
+                taskId
+            });
+
+            return 'Mau menyelesaikan task ini atau melakukan tindakan lain? Balas "selesai" untuk menyelesaikannya.';
+        }
+
+        if (context.type === 'COMPLETED_TASK_LIST') {
+            conversationService.clearContext(phone);
+            return 'Untuk mengembalikan task ke pending, fitur pemilihan task selesai perlu ditambahkan.';
+        }
+
+        if (context.type === 'MATCHING_TASK_LIST') {
+            const result = await taskService.completeTaskById(taskId, phone);
+            conversationService.clearContext(phone);
+
+            if (result.result === 'NOT_FOUND') {
+                return 'Task tidak ditemukan atau sudah selesai.';
+            }
+
+            return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
+        }
+    }
+
     const parsed = await parseMessage(message);
 
     switch (parsed.intent) {
-        // Menampilkan task yang belum selesai.
         case 'LIST_TASKS': {
             const tasks = await taskService.getAllTasks(phone);
 
-            if (tasks.length === 0) {
+            if (!tasks.length) {
                 conversationService.clearContext(phone);
                 return 'Belum ada task yang tercatat.';
             }
 
             conversationService.setContext(phone, {
                 type: 'PENDING_TASK_LIST',
-                taskIds: tasks.map((task) => task.id)
+                taskIds: tasks.map(task => task.id)
             });
 
             return tasks
@@ -58,18 +110,17 @@ const handleMessage = async (message, phone) => {
                 .join('\n');
         }
 
-        // Menampilkan task yang sudah selesai.
         case 'LIST_COMPLETED_TASKS': {
             const tasks = await taskService.getCompletedTasks(phone);
 
-            if (tasks.length === 0) {
+            if (!tasks.length) {
                 conversationService.clearContext(phone);
                 return 'Belum ada task yang selesai.';
             }
 
             conversationService.setContext(phone, {
                 type: 'COMPLETED_TASK_LIST',
-                taskIds: tasks.map((task) => task.id)
+                taskIds: tasks.map(task => task.id)
             });
 
             return tasks
@@ -77,121 +128,101 @@ const handleMessage = async (message, phone) => {
                 .join('\n');
         }
 
-        // Menambahkan task baru.
         case 'CREATE_TASK': {
             if (!parsed.title?.trim()) {
-                return 'Judul task belum jelas. Coba tulis ulang, ya.';
+                conversationService.setContext(phone, {
+                    type: 'ASK_TASK_TITLE'
+                });
+
+                return 'Mau mencatat pekerjaan apa?';
             }
+
+            // Rapikan judul task menggunakan AI.
+            const cleanedTitle = await cleanTaskTitle(parsed.title);
 
             const task = await taskService.createTask(
-                parsed.title.trim(),
+                cleanedTitle,
                 phone
             );
 
             conversationService.clearContext(phone);
 
-            return `Task berhasil ditambahkan: ${task.title}`;
+            return `✅ Task berhasil ditambahkan: ${task.title}`;
         }
 
-        // Mengembalikan task completed ke pending.
-        case 'REOPEN_TASK': {
-            const numberMatch = message.match(
-                /\b(?:task\s+)?(?:completed\s+)?(?:nomor\s*|no\s*)?(\d+)\s+(?:balikin|kembalikan|ubah|jadiin|jadi|batalin)\s+(?:ke\s+)?pending\b/i
-            );
-
-            const taskNumber = parsed.number ?? (
-                numberMatch ? Number(numberMatch[1]) : null
-            );
-
-            if (taskNumber === null) {
-                return 'Sebutkan nomor task completed yang ingin dikembalikan ke pending.';
-            }
-
-            const result = await taskService.reopenTaskByNumber(
-                taskNumber,
-                phone
-            );
-
-            if (result.result === 'NOT_FOUND') {
-                return `Task completed nomor ${taskNumber} tidak ditemukan.`;
-            }
-
-            conversationService.clearContext(phone);
-
-            return `↩️ Task "${result.task.title}" dikembalikan ke pending.`;
-        }
-
-        // Menyelesaikan task berdasarkan nomor atau judul.
         case 'COMPLETE_TASK': {
-            const numberMatch = message.match(
-                /\b(?:task\s*)?(?:nomor\s*|no\s*)?(\d+)\s*(?:(?:udah|sudah|dah)\s*)?(?:beres|selesai|kelar|done)\b/i
-            );
-
-            const taskNumber = parsed.number ?? (
-                numberMatch ? Number(numberMatch[1]) : null
-            );
-
-            if (taskNumber !== null) {
+            if (parsed.number !== null) {
                 const result = await taskService.completeTaskByNumber(
-                    taskNumber,
+                    parsed.number,
                     phone
                 );
 
                 if (result.result === 'NOT_FOUND') {
-                    return `Task nomor ${taskNumber} tidak ditemukan di daftar task pending kamu.`;
+                    return `Task nomor ${parsed.number} tidak ditemukan di daftar pending.`;
                 }
 
                 conversationService.clearContext(phone);
-
                 return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
             }
 
-            const query = (parsed.query || '')
-                .replace(
-                    /\b(task|yang|udah|sudah|dah|beres|selesai|kelar|done|nomor|no)\b/gi,
-                    ''
-                )
-                .replace(/\s+/g, ' ')
-                .trim();
+            if (parsed.query) {
+                const result = await taskService.completeTaskByTitle(
+                    parsed.query,
+                    phone
+                );
 
-            if (!query) {
-                return 'Sebutkan judul task yang ingin diselesaikan, ya.';
+                if (result.result === 'NOT_FOUND') {
+                    return `Aku belum menemukan task "${parsed.query}" yang masih pending.`;
+                }
+
+                if (result.result === 'MULTIPLE_MATCHES') {
+                    conversationService.setContext(phone, {
+                        type: 'MATCHING_TASK_LIST',
+                        taskIds: result.tasks.map(task => task.id)
+                    });
+
+                    return result.tasks
+                        .map((task, index) => `${index + 1}. ${task.title}`)
+                        .join('\n') + '\n\nBalas nomor task yang mau diselesaikan.';
+                }
+
+                conversationService.clearContext(phone);
+                return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
             }
 
-            const result = await taskService.completeTaskByTitle(
-                query,
+            return 'Task mana yang mau diselesaikan? Sebutkan judulnya atau nomornya.';
+        }
+
+        case 'REOPEN_TASK': {
+            if (parsed.number === null) {
+                return 'Sebutkan nomor task completed yang ingin dikembalikan ke pending.';
+            }
+
+            const result = await taskService.reopenTaskByNumber(
+                parsed.number,
                 phone
             );
 
             if (result.result === 'NOT_FOUND') {
-                return `Aku belum menemukan task "${query}" yang masih pending.`;
-            }
-
-            if (result.result === 'MULTIPLE_MATCHES') {
-                conversationService.setContext(phone, {
-                    type: 'MATCHING_TASK_LIST',
-                    taskIds: result.tasks.map((task) => task.id)
-                });
-
-                const choices = result.tasks
-                    .map((task, index) => `${index + 1}. ${task.title}`)
-                    .join('\n');
-
-                return `Ada beberapa task yang cocok. Pilih salah satu:\n${choices}`;
+                return `Task completed nomor ${parsed.number} tidak ditemukan.`;
             }
 
             conversationService.clearContext(phone);
-
-            return `✅ Task "${result.task.title}" berhasil diselesaikan!`;
+            return `↩️ Task "${result.task.title}" dikembalikan ke pending.`;
         }
 
-        // Pesan tidak dipahami.
         case 'UNCLEAR':
-        default:
+        default: {
+            // Simpan konteks pertanyaan agar balasan berikutnya tidak langsung
+            // dianggap sebagai perintah baru.
+            conversationService.setContext(phone, {
+                type: 'GENERAL_CLARIFICATION',
+                lastMessage: message
+            });
+
             return 'Aku belum yakin maksudmu. Mau menambahkan task, menyelesaikan task, mengembalikan task ke pending, atau melihat daftar task?';
+        }
     }
 };
 
-module.exports = {
-    handleMessage
-};
+module.exports = { handleMessage };

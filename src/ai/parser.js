@@ -1,7 +1,5 @@
 require('dotenv').config();
 
-let aiClientPromise;
-
 const UNCLEAR = {
     intent: 'UNCLEAR',
     title: null,
@@ -9,25 +7,17 @@ const UNCLEAR = {
     number: null
 };
 
-const getAI = async () => {
-    if (!aiClientPromise) {
-        aiClientPromise = import('@google/genai')
-            .then(({ GoogleGenAI }) => {
-                if (!process.env.GEMINI_API_KEY) {
-                    throw new Error('GEMINI_API_KEY belum diatur di .env');
-                }
-
-                return new GoogleGenAI({
-                    apiKey: process.env.GEMINI_API_KEY
-                });
-            })
-            .catch((error) => {
-                aiClientPromise = null;
-                throw error;
-            });
+const getAI = () => {
+    if (!process.env.OPENROUTER_API_KEY) {
+        throw new Error('OPENROUTER_API_KEY belum diatur di .env');
     }
 
-    return aiClientPromise;
+    return {
+        apiKey: process.env.OPENROUTER_API_KEY,
+        model:
+            process.env.OPENROUTER_MODEL ||
+            'minimax/minimax-m3.1-flash:free'
+    };
 };
 
 // Normalisasi bahasa chat Indonesia.
@@ -68,13 +58,13 @@ const result = (intent, extra = {}) => ({
     number: extra.number ?? null
 });
 
-// Parser manual: tidak memerlukan koneksi ke Gemini.
+// Parser lokal: tidak membutuhkan API.
 const parseLocally = (message) => {
     const text = normalizeMessage(message);
 
     if (!text) return UNCLEAR;
 
-    // Jangan menjalankan perintah yang jelas ditolak atau dibatalkan.
+    // Cegah tindakan yang secara eksplisit ditolak.
     if (
         /\b(jangan|belum|bukan|tidak|gak usah|batal|batalkan|urungkan)\b/.test(text) &&
         /\b(beres|selesai|kelar|done|selesaikan|pending)\b/.test(text) &&
@@ -83,7 +73,7 @@ const parseLocally = (message) => {
         return UNCLEAR;
     }
 
-    // 1. Buat task: harus dideteksi sebelum pengecekan kata "task".
+    // 1. Membuat task.
     const createMatch = text.match(
         /^(?:(?:jangan lupa)\s+)?(?:catat|tambah|buat|ingatkan)\s+(?:(?:task|tugas|pekerjaan)\s+)?(?:gue\s+)?(.+)$/
     );
@@ -110,7 +100,7 @@ const parseLocally = (message) => {
         });
     }
 
-    // 2. Kembalikan task ke pending.
+    // 2. Mengembalikan task ke pending.
     if (
         /\b(balikin|kembalikan|ubah|jadiin|jadikan|batalin)\b/.test(text) &&
         /\b(pending|belum selesai|belum beres)\b/.test(text)
@@ -129,10 +119,12 @@ const parseLocally = (message) => {
         });
     }
 
-    // 3. Lihat daftar task selesai.
-    // Cek ini harus sebelum COMPLETE_TASK berdasarkan judul.
-    const asksForList = /\b(lihat|lihatin|cek|daftar|list|show|spill|tampilkan|tampilin|apa saja|apa aja|mana|riwayat)\b/.test(text);
-    const mentionsCompleted = /\b(completed|selesai|beres|kelar|done|riwayat)\b/.test(text);
+    // 3. Melihat daftar task selesai.
+    const asksForList =
+        /\b(lihat|lihatin|cek|daftar|list|show|spill|tampilkan|tampilin|apa saja|apa aja|mana|riwayat)\b/.test(text);
+
+    const mentionsCompleted =
+        /\b(completed|selesai|beres|kelar|done|riwayat)\b/.test(text);
 
     if (
         asksForList &&
@@ -142,8 +134,22 @@ const parseLocally = (message) => {
         return result('LIST_COMPLETED_TASKS');
     }
 
+    // 4. Melihat daftar task pending.
+    if (
+        /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
+        /\b(lihat|cek|daftar|list|show|spill|apa|mana|punya|tampilkan|tampilin|sekarang)\b/.test(text)
+    ) {
+        return result('LIST_TASKS');
+    }
 
-    // 5. Selesaikan task berdasarkan nomor.
+    if (
+        /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
+        /\b(apa saja|apa aja|apaan|punya)\b/.test(text)
+    ) {
+        return result('LIST_TASKS');
+    }
+
+    // 5. Menyelesaikan task berdasarkan nomor.
     const numberCompleteMatch = text.match(
         /^(?:(?:eh|terus)\s+)?(?:yang\s+)?(?:task\s+)?(?:nomor\s*|no\s*)?(\d+)\s*(?:(?:sudah|beres|selesai|kelar)\s*)?(?:sudah\s*)?(?:beres|selesai|kelar|done)$/
     );
@@ -154,7 +160,7 @@ const parseLocally = (message) => {
         });
     }
 
-    // 6. Selesaikan task berdasarkan judul.
+    // 6. Menyelesaikan task berdasarkan judul.
     const completeMatch = text.match(
         /^(?:yang\s+)?(?:task\s+|tugas\s+)?(.+?)\s+(?:sudah\s+)?(?:beres|selesai|kelar|done)$/
     );
@@ -173,33 +179,17 @@ const parseLocally = (message) => {
         }
     }
 
-        // 4. Lihat daftar task pending.
-    if (
-        /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
-        /\b(lihat|cek|daftar|list|show|spill|apa|mana|punya|tampilkan|tampilin|sekarang)\b/.test(text)
-    ) {
-        return result('LIST_TASKS');
-    }
-
-    // Contoh: "apa task gue?" atau "gue punya task apa aja?"
-    if (
-        /\b(task|tugas|kerjaan|pekerjaan)\b/.test(text) &&
-        /\b(apa saja|apa aja|apaan|punya)\b/.test(text)
-    ) {
-        return result('LIST_TASKS');
-    }
-
     return null;
 };
 
-
-const parseWithGemini = async (message) => {
-    const ai = await getAI();
+// Parser AI menggunakan OpenRouter.
+const parseWithOpenRouter = async (message) => {
+    const ai = getAI();
 
     const prompt = `
 Kamu adalah parser pesan untuk aplikasi checklist berbahasa Indonesia.
 
-Kembalikan JSON valid saja:
+Kembalikan JSON valid saja dengan struktur:
 {
   "intent": "CREATE_TASK | LIST_TASKS | LIST_COMPLETED_TASKS | COMPLETE_TASK | REOPEN_TASK | UNCLEAR",
   "title": null,
@@ -213,13 +203,13 @@ Aturan:
 - LIST_COMPLETED_TASKS: melihat task yang selesai.
 - COMPLETE_TASK: menyelesaikan task tertentu.
 - REOPEN_TASK: mengembalikan task selesai ke pending.
-- UNCLEAR: maksud tidak jelas, bertentangan, atau memerlukan konteks yang tidak tersedia.
+- UNCLEAR: maksud tidak jelas atau bertentangan.
 - Untuk CREATE_TASK, title berisi pekerjaan yang ingin dicatat.
 - Untuk COMPLETE_TASK atau REOPEN_TASK, query berisi judul jika disebut.
-- Isi number jika nomor task disebut eksplisit.
+- Isi number jika nomor task disebut secara eksplisit.
 - Jangan mengarang judul, nomor, atau konteks.
 - Jangan menganggap semua pesan sebagai task baru.
-- Pesan negatif seperti "jangan selesaikan task 2" tidak boleh menyelesaikan task.
+- Pesan seperti "jangan selesaikan task 2" harus menghasilkan UNCLEAR.
 - Pahami singkatan dan bahasa chat informal Indonesia.
 - Field yang tidak relevan harus null.
 
@@ -252,15 +242,57 @@ Pesan pengguna:
 ${JSON.stringify(message)}
 `;
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-            responseMimeType: 'application/json'
+    const response = await fetch(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${ai.apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: ai.model,
+                messages: [
+                    {
+                        role: 'system',
+                        content:
+                            'Kamu adalah parser intent aplikasi checklist. Balas hanya dengan JSON valid tanpa markdown.'
+                    },
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ],
+                temperature: 0,
+                max_tokens: 800,
+                reasoning: {
+                    effort: 'minimal'
+                }
+            })
         }
-    });
+    );
 
-    const parsed = JSON.parse(response.text);
+    if (!response.ok) {
+        // Jangan mencetak API key atau header rahasia ke log.
+        throw new Error(`OpenRouter API mengembalikan status HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // console.log('OpenRouter response:', JSON.stringify(data, null, 2));
+
+    const content = data.choices?.[0]?.message?.content;
+
+    if (typeof content !== 'string' || !content.trim()) {
+        throw new Error('Respons OpenRouter kosong atau tidak valid.');
+    }
+
+    const jsonText = content
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/, '')
+        .trim();
+
+    const parsed = JSON.parse(jsonText);
 
     const validIntents = [
         'CREATE_TASK',
@@ -285,25 +317,25 @@ ${JSON.stringify(message)}
     });
 };
 
+// Fungsi utama parser.
 const parseMessage = async (message) => {
     if (typeof message !== 'string' || !message.trim()) {
         return UNCLEAR;
     }
 
-    // Prioritaskan parser lokal agar perintah umum tidak memakai kuota AI.
+    // Utamakan parser lokal agar perintah umum tidak memakai kuota AI.
     const localResult = parseLocally(message);
 
     if (localResult) {
         return localResult;
     }
 
-    // Jika parser lokal belum mengenali pesan, coba Gemini.
+    // Jika parser lokal tidak mengenali pesan, coba OpenRouter.
     try {
-        return await parseWithGemini(message);
+        return await parseWithOpenRouter(message);
     } catch (error) {
-        // Fallback aman saat kuota habis, API error, atau respons tidak valid.
         console.error(
-            'Gemini gagal, menggunakan fallback lokal:',
+            'OpenRouter gagal, menggunakan fallback lokal:',
             error.message
         );
 
@@ -311,8 +343,89 @@ const parseMessage = async (message) => {
     }
 };
 
+// Merapikan judul task menggunakan OpenRouter.
+const cleanTaskTitle = async (title) => {
+    if (!title || typeof title !== 'string') {
+        return title;
+    }
+
+    try {
+        const ai = getAI();
+
+        const response = await fetch(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${ai.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: ai.model,
+                    messages: [
+                        {
+                            role: 'system',
+                            content: `
+Kamu bertugas merapikan judul task untuk aplikasi checklist berbahasa Indonesia.
+
+Aturan:
+- Ubah bahasa informal menjadi bahasa Indonesia yang rapi dan natural.
+- Gunakan judul singkat, jelas, dan mudah dipahami.
+- Gunakan kata kerja yang sesuai, seperti Membuat, Memeriksa, Menyelesaikan, atau Membeli.
+- Gunakan Title Case yang natural.
+- Pertahankan maksud asli, nama orang, singkatan teknis, dan informasi waktu.
+- Jangan menambahkan informasi yang tidak disebutkan.
+- Jangan memberi penjelasan atau tanda kutip.
+- Kembalikan judul task saja.
+
+Contoh:
+"gw perlu nyelesain bab 3 TA" → Menyelesaikan Bab 3 Tugas Akhir
+"besok cek stok sparepart ahu" → Cek Stok Sparepart AHU Besok
+"ntar beli bearing buat pompa" → Membeli Bearing untuk Pompa
+"gw harus bikin report mingguan" → Membuat Laporan Mingguan
+"jgn lupa follow up bu mega soal oa" → Follow Up OA ke Bu Mega
+"hari ini cek panel listrik" → Memeriksa Panel Listrik Hari Ini
+`
+                        },
+                        {
+                            role: 'user',
+                            content: title
+                        }
+                    ],
+                    temperature: 0.2,
+                    max_tokens: 200,
+                    reasoning: {
+                        effort: 'minimal'
+                    }
+                })
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const cleanedTitle = data.choices?.[0]?.message?.content
+            ?.trim()
+            .replace(/^["'`]+|["'`]+$/g, '');
+
+        if (!cleanedTitle) {
+            throw new Error('Judul hasil AI kosong.');
+        }
+
+        return cleanedTitle;
+    } catch (error) {
+        console.error('Gagal merapikan judul task:', error.message);
+
+        // Jika AI gagal, tetap gunakan judul asli.
+        return title.trim();
+    }
+};
+
 module.exports = {
     parseMessage,
     normalizeMessage,
-    parseLocally
+    parseLocally,
+    cleanTaskTitle
 };

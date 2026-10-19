@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Task" ADD COLUMN     "lastReminderAt" TIMESTAMP(3),
+ADD COLUMN     "nextReminderAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN     "reminderCount" INTEGER NOT NULL DEFAULT 0;

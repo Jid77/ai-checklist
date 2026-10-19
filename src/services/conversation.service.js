@@ -18,8 +18,21 @@ const clearContext = (phone) => {
     conversations.delete(phone);
 };
 
+const setLastMessage = (phone, message) => {
+    const current = getContext(phone) || {};
+
+    conversations.set(phone, {
+        ...current,
+        lastMessage: message,
+        updatedAt: Date.now()
+    });
+};
+
 module.exports = {
     setContext,
     getContext,
-    clearContext
+    clearContext,
+    setLastMessage
 };
+
+

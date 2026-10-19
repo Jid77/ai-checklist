@@ -25,9 +25,15 @@ model Task {
   userId    String
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  // Pengaturan reminder otomatis
+  reminderCount   Int       @default(0)
+  nextReminderAt  DateTime? @default(now())
+  lastReminderAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
+
 
 enum TaskStatus {
   PENDING

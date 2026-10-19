@@ -331,7 +331,8 @@ const parseMessage = async (message) => {
     // Utamakan parser lokal agar perintah umum tidak memakai kuota AI.
     const localResult = parseLocally(message);
 
-    if (localResult) {
+    // Hanya kembalikan hasil jika intent berhasil dikenali.
+    if (localResult && localResult.intent !== 'UNCLEAR') {
         return localResult;
     }
 
@@ -348,6 +349,7 @@ const parseMessage = async (message) => {
         return UNCLEAR;
     }
 };
+
 
 // Merapikan judul task menggunakan OpenRouter.
 const cleanTaskTitle = async (title) => {

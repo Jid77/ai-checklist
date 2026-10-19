@@ -5,7 +5,11 @@ const conversationService = require('./conversation.service');
 const handleMessage = async (message, phone) => {
     const text = message.trim().toLowerCase();
     const context = conversationService.getContext(phone);
-
+    
+    if (/^status ai[.!?]*$/i.test(message.trim())) {
+        conversationService.clearContext(phone);
+        return require('../ai/ai-status').getStatus();
+    }
     // Jawaban atas pertanyaan klarifikasi tindakan task.
     if (context?.type === 'ASK_TASK_ACTION') {
         if (/\b(batal|lupakan|gajadi|tidak jadi)\b/.test(text)) {
